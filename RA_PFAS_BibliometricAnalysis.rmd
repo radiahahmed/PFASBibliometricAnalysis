@@ -1,0 +1,370 @@
+---
+title: "PFAS_Bibliometrics_Rayyan"
+author: "Radiah Ahmed"
+date: "02/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+sessionInfo()
+install.packages("bibliometrix", dependencies=TRUE, repos = "http://cran.us.r-project.org") #install bibliometrix package and dependencies
+install.packages("tidyverse", dependencies=TRUE, repos = "http://cran.us.r-project.org") #install tidyverse package and dependencies
+library(bibliometrix)	#uploading the package
+library(tidyverse) #uploading the package
+# Note: output not displayed for this chunk
+```
+**Purpose:**   
+Integrating manual screening in Rayyan into bibliometric analyses workflow.
+(only for Scopus records).
+
+## Load original list of references
+Use the .ris file exported from Scopus to do screening in Rayyan (the .bib files from Scopus sometimes fail to load in Rayyan). 
+After screening, export all records into a .csv file, including labels, abstract, etc. 
+
+Upload the bib file exported from Scopus using "convert2df" function from bibliometrix package (this package does not work with .ris files). It will automatically convert the data from that file into the internal *bibliometrix* format.  
+
+```{r upload and convert original references, eval=TRUE}
+bib <- convert2df("Scopus_pilot0_1507hits_export.bib", dbsource = "scopus", format = "bibtex") # Convert to a bibliometric data frame
+names(bib)
+dim(bib) #1507 41
+#bib$CR[1] #contains Cited References
+```
+
+
+Upload the csv file exported from Rayyan (bibliometrix will not work with .bib or .ris files exported from Rayyan due to some formatting changes happening there).
+
+```{r upload and convert all screened references , eval=TRUE}
+screened <- read.csv("Rayyan_pilot0_2023hits_export.csv")
+names(screened)
+dim(screened) #2023 19 - note that many fields get collapsed into the "notes" field
+
+#screened$notes[1] #contains export info, decisions and labels
+
+#filter rows that do not contain the string 'Included' or 'Maybe' in the notes column
+screened %>% filter(!grepl('Excluded', notes)) %>% filter(!grepl('Maybe', notes)) -> screened_included
+dim(screened_included)
+
+#extract record labels from notes column - i.e. string after "RAYYAN-LABELS: "
+screened_included$labels <- sub(".*RAYYAN-LABELS: ", "", screened_included$notes)
+table(screened_included$labels) #one label messed up (missing in Rayyan): screened_included[235,] #key == rayyan-171377150 - should be "Bird,Other,Marine Mammals" 
+
+screened_included %>% mutate(labels=replace(labels, key=="rayyan-171377150", "Bird,Other,Marine Mammals")) %>%  as.data.frame() -> screened_included
+#screened_included[screened_included$key == "rayyan-171377150", "labels"] #check if substituted
+
+dim(screened_included) #345 records
+screened_included %>% filter(grepl('scopus', url)) %>% nrow() # 298 records from Scopus (these records have doi contained in their url string), some of these records were excluded during Rayyan screening
+```
+
+```{r merge by urls , eval=FALSE}
+#The field 'TI2' will now be used for merging info from onto bib data frame
+bib_url <- left_join(bib, screened_included %>% dplyr::select(url, title, year, journal, labels), by = "url")
+dim(bib_url) #1507 all records, both included and excluded - use lables column to separate these
+table(is.na(bib_url$labels)) #282 records with labels (these were included, if no lebels - not included)
+
+#only keep rows with labels
+bib_url %>% filter(!is.na(labels)) -> bib_url_included
+dim(bib_url_included) #282 records included
+table(bib_url_included$labels) #these can be separated into different columns, one for each group of animals
+names(bib_url_included)
+```
+
+```{r merge by titles , eval=TRUE}
+#before joining by title, need to tidy up titles
+
+# Removing all punctuation and extra white spaces in bib object, in order to compare dataframes by Title:
+bib$TI2 <- str_replace_all(bib$TI,"[:punct:]","") %>% str_replace_all(.,"[ ]+", " ") 
+
+# Remove all punctuation and extra white spaces in screened_included object, in order to compare dataframes by Title:
+screened_included$TI2 <- str_to_upper(str_replace_all(screened_included$title,"[:punct:]","")) %>% str_replace_all(.,"[ ]+", " ")
+
+# The field 'TI2' will now be used for merging info from onto bib data frame
+bib_title <- left_join(bib, screened_included %>% dplyr::select(url, title, TI2, year, journal, labels,), by = "TI2")
+table(is.na(bib_title$labels)) #283 records with labels, these were included
+
+#only keep rows with labels
+bib_title %>% filter(!is.na(labels)) -> bib_title_included
+dim(bib_title_included) #283 records included
+table(bib_title_included$labels) 
+names(bib_title_included)
+
+
+```
+
+*NOTE* Exporting bib_title_included as csv 
+
+```{r}
+#Exporting bib_title_included as csv to get rid of review documents
+write.csv(bib_title_included, "/Users/radiahahmed/Downloads/BibliometricsPFAS/bib_title_included.csv")
+
+```
+
+
+*NOTE* This is reading in the updated csv 
+
+```{r}
+bib_title_included <- convert2df("bib_title_included.csv", dbsource = "scopus", format = "csv")
+```
+
+
+*NOTE* The following lines of code have been added check for specific excluded papers. The excluded papers have already been removed from the csv manually beforehand.
+
+```{r}
+
+#the following paper is included in the dataframe, this is just to test if this code actually does return if a paper is there or not!
+
+which(bib_title_included$TI == "FLUORINATED PRECURSOR COMPOUNDS IN SEDIMENTS AS A SOURCE OF PERFLUORINATED ALKYL ACIDS (PFAA) TO BIOTA")
+
+#the following are all excluded papers. 
+which(bib_title_included$TI == "BIOCONCENTRATION AND TISSUE DISTRIBUTION OF PERFLUORINATED ACIDS IN RAINBOW TROUT (ONCORHYNCHUS MYKISS)")
+
+which(bib_title_included$TI == "ACCUMULATION AND POTENTIAL HEALTH EFFECTS OF ORGANOHALOGENATED COMPOUNDS IN THE ARCTIC FOX (VULPES LAGOPUS)-A REVIEW")
+
+which(bib_title_included$TI == "ORGANIC POLLUTANTS AND OCEAN FRONTS ACROSS THE ATLANTIC OCEAN: A REVIEW")
+
+which(bib_title_included$TI == "BIOACCUMULATION OF ORGANIC POLLUTANTS IN INDO-PACIFIC HUMPBACK DOLPHIN: A REVIEW ON CURRENT KNOWLEDGE AND FUTURE PROSPECTS")
+
+which(bib_title_included$TI == "FATE AND EFFECTS OF POLY- AND PERFLUOROALKYL SUBSTANCES IN THE AQUATIC ENVIRONMENT: A REVIEW")
+
+which(bib_title_included$TI == "A REVIEW OF ECOLOGICAL IMPACTS OF GLOBAL CLIMATE CHANGE ON PERSISTENT ORGANIC POLLUTANT AND MERCURY PATHWAYS AND EXPOSURES IN ARCTIC MARINE ECOSYSTEMS")
+
+which(bib_title_included$TI == "DRUG METABOLISM AND EFFECTS OF CARCINOGENS IN CULTURED HEPATIC CELLS (1980) PHARMACOLOGY REVIEW")
+
+which(bib_title_included$TI == "CONTAMINATION OF THE ST. LAWRENCE BELUGA BY PERSISTENT ORGANIC POLLUTANTS - A REVIEW [LA CONTAMINATION DU BLUGA DE L'ESTUAIRE DU SAINT-LAURENT PAR LES POLLUANTS ORGANIQUES PERSISTANTS EN REVUE]")
+ 
+which(bib_title_included$TI == "ASSESSING THE RISKS OF PERSISTENT ORGANIC POLLUTANTS TO TOP PREDATORS: A REVIEW OF APPROACHES") 
+
+which(bib_title_included$TI == "ARE PFCAS BIOACCUMULATIVE? A CRITICAL REVIEW AND COMPARISON WITH REGULATORY CRITERIA AND PERSISTENT LIPOPHILIC COMPOUNDS") 
+
+which(bib_title_included$TI == "COMPARATIVE REVIEW OF THE DISTRIBUTION AND BURDEN OF CONTAMINANTS IN THE BODY OF POLAR BEARS") 
+ 
+which(bib_title_included$TI == "SIMULTANEOUS DETERMINATION OF 21 TRACE PERFLUOROALKYL SUBSTANCES IN FISH BY ISOTOPE DILUTION ULTRAHIGH PERFORMANCE LIQUID CHROMATOGRAPHY TANDEM MASS SPECTROMETRY") 
+
+which(bib_title_included$TI == "SIMULTANEOUS DETERMINATION OF LEGACY AND EMERGING PER- AND POLYFLUOROALKYL SUBSTANCES IN FISH BY QUECHERS COUPLED WITH ULTRAHIGH PERFORMANCE LIQUID CHROMATOGRAPHY TANDEM MASS SPECTROMETRY") 
+
+which(bib_title_included$TI == "CONCENTRATIONS OF 19 PERFLUORINATED COMPOUNDS IN SALTWATER AND FRESHWATER FISHES ANALYZED BY LIQUID CHROMATOGRAPHY-TANDEM MASS SPECTROMETRY") 
+
+which(bib_title_included$TI == "ANALYSIS AND VALIDATION OF PERFLUORINATED COMPOUNDS IN WATER, SEDIMENT AND FISH WITH LC-ESIÂ€“MS/MS") 
+
+#getting rid of row no. 64, to remove the paper
+
+bib_title_included <- bib_title_included[-c(64), ]
+
+#double checking that the paper has been removed
+
+which(bib_title_included$TI == "SIMULTANEOUS DETERMINATION OF LEGACY AND EMERGING PER- AND POLYFLUOROALKYL SUBSTANCES IN FISH BY QUECHERS COUPLED WITH ULTRAHIGH PERFORMANCE LIQUID CHROMATOGRAPHY TANDEM MASS SPECTROMETRY") 
+
+```
+
+
+Note: some of the included papers must havbe cam form WoS, not Scopus, but we canot mix these records in bibliometrix analyses becouse some of the information is formatted differently. We will analyses only 283 records that came from Scopus. 
+teehee
+Test with bibliometrix   
+
+```{r test bibliometrix, echo=FALSE}
+# Preliminary descriptive analyses using summary function
+results <- biblioAnalysis(bib_title_included, sep = ";") #this calculates the main bibliometric measures, displaying main info about the bibliographic data grame 
+#summary(object = results, k = 10, pause = TRUE) #display a series of summary tables
+plot(results, k = 25, pause = TRUE) #this takes top 10 values from each table and plots some graphs
+```
+
+
+```{r}
+#saving these plots into a pdf:
+pdf(file = "bib_descriptive_plots.pdf", height = 8, width = 8, pointsize=10) #
+plot(results, k = 20, pause=FALSE) #this takes top 20 values from each plottable table
+dev.off()
+
+```
+Most cited papers - Should be noted that Kannan's paper appears twice, and there seems to be no duplicate of it in the dataset. Interestingly, his paper isn't one of the papers we screened at all. 
+
+```{r}
+mostcitedP <- citations(bib_title_included, field = "article", sep = ";") #calculating the frequency distribution of citations, assigning citations to mostcitedP
+cbind(mostcitedP$Cited[1:5]) #picking top 10 cited papers
+
+```
+
+Ten most cited authors:
+
+```{r}
+mostcitedA <- citations(bib_title_included, field = "author", sep = ";") #calculating frequency distribution of cited authors
+cbind(mostcitedA$Cited[1:10]) #first 10, top cited authors
+```
+
+Local citations - which authors are cited locally (by others within the dataset)
+
+```{r}
+mostcitedLA <- localCitations(bib_title_included, sep = ";") #Organising by frequency of those authors which are cited by others within the same dataset we are analysing (within bib)
+mostcitedLA$Authors[1:20,] #top 10 most cited authors locally
+mostcitedLA$Papers[1:20,] #top 10 most cited papers locally
+```
+
+Authors dominance ranking - calculating the authors dominance ranking using dominance factor, authored articles (single, multi and first author articles)
+
+```{r}
+dominance(results, k = 10) #Picking up top 10 dominant authors 
+dim(bib_title_included)
+```
+Top author's productivity over time -> Calculate and plot top author's productivity over time
+
+```{r}
+authorProdOverTime(bib_title_included, k = 10, graph = TRUE)
+
+pdf(file = "co-citation.pdf", height = 8, width = 8, pointsize=10) #
+authorProdOverTime(bib_title_included, k = 10, graph = TRUE)
+dev.off()
+```
+
+
+Bibliographic coupling - this will couple two papers if they share a minimum of one reference from their reference list.
+
+NOTE: This analysis does not work with the filtered dataset -> Error message, "error in dimnamesGets(x, value). invalid dimnames given for dgCMatix object"
+
+```{r}
+NetMatrix <- biblioNetwork(bib_title_included, analysis = "coupling", network = "references", sep = ";") #creating the bibliometric network from the data frame (bib), the type of analysis being formed is coupling, and the network typology is references 
+net = networkPlot(NetMatrix, weighted = NULL, n = 75, Title = "Papers' bibliographic coupling", type = "fruchterman", size = 5, remove.multiple = TRUE, labelsize = 0.5) #this visualises and generates the NetMatrix, adding parameters for the plot including size,labels and titles. the 10 most coupled papers have been shown here
+
+```
+
+Author's bibliographic coupling -> this is similar to the previous, but it couples two authors if they share at least one reference from their reference list
+
+```{r}
+NetMatrix <- biblioNetwork(bib_title_included, analysis = "coupling", network = "authors", sep = ";") #creating the bibliometric network from the data frame (bib), the type of analysis being formed is coupling, and the network typology is authors
+net = networkPlot(NetMatrix, weighted = NULL, n = 25, Title = "Authors' bibliographic coupling", type = "fruchterman", size = 5, remove.multiple = TRUE, labelsize = 0.8) #visualises and generates the matrix
+```
+Bibliographic co-citation -> this links two papers if both of them are cited in a third separate paper
+
+```{r}
+NetMatrix <- biblioNetwork(bib_title_included[1:50,], analysis = "co-citation", network = "references", sep = ";") #creating the bibliometric network from the data frame (bibm top 50 papers), the type of analysis being formed is co-citations, and the network typology is references
+net = networkPlot(NetMatrix, weighted=NULL, n = 50, Title = "Papers' co-citations", type = "fruchterman", size = 5, remove.multiple = TRUE, labelsize = 0.5) #visualising
+
+pdf(file = "co-citation.pdf", height = 8, width = 8, pointsize=10) #
+NetMatrix <- biblioNetwork(bib_title_included[1:50,], analysis = "co-citation", network = "references", sep = ";")
+net = networkPlot(NetMatrix, weighted=NULL, n = 50, Title = "Papers' co-citations", type = "fruchterman", size = 5, remove.multiple = TRUE, labelsize = 0.5) 
+dev.off()
+```
+
+Bibliographic collaboration -> analyses collaboration between authors, the nodes here represent different authors and there is a link between them if there is co-authorship
+
+```{r}
+NetMatrix <- biblioNetwork(bib_title_included, analysis = "collaboration", network = "authors", sep = ";") #analysing for co-authorship through collaboration creating the bibliometric network from the data frame (bib), the type of analysis being formed is collaboration, and the network typology is authors
+net = networkPlot(NetMatrix, weighted = NULL, n = 35, Title = "Authors' collaborations", type = "fruchterman", size = 10, remove.multiple = TRUE, labelsize = 0.75) #visualising
+
+pdf(file = "authorcollaboration.pdf", height = 8, width = 8, pointsize=10) #
+NetMatrix <- biblioNetwork(bib_title_included, analysis = "collaboration", network = "authors", sep = ";") #analysing for co-authorship through collaboration creating the bibliometric network from the data frame (bib), the type of analysis being formed is collaboration, and the network typology is authors
+net = networkPlot(NetMatrix, weighted = NULL, n = 35, Title = "Authors' collaborations", type = "fruchterman", size = 10, remove.multiple = TRUE, labelsize = 0.75) #visualising 
+dev.off()
+
+```
+
+Country Scientific Collaboration - From which countries do authors publish papers together the most?. ERROR: This does not work for filtered dataset as it does not have the field "AU_CO" So I have done the analysis on the original dataset
+
+```{r}
+
+bib <- metaTagExtraction(bib_title_included, Field = "AU_CO", sep = ";") #we need to extract countries from the affiliations first - this extra step allows to get the country of affiliation for co-authors (AU-CO)
+#does not work for filtered papers in the data frame bib_title_included as it does not have the field AU_CO
+NetMatrix <- biblioNetwork(bib, analysis = "collaboration", network = "countries", short = TRUE, sep = ";") #creating the bibliometric network from the data frame (bib) the type of analysis being formed is collaboration, and the network typology is countries
+net = networkPlot(NetMatrix, n = 50, Title = "Country Collaboration", type = "fruchterman", size = 10, remove.multiple = TRUE, labelsize = 0.75) #visualisation
+
+pdf(file = "country_collaboration.pdf.pdf", height = 8, width = 8, pointsize=10) #
+bib <- metaTagExtraction(bib_title_included, Field = "AU_CO", sep = ";") #we need to extract countries from the affiliations first - this extra step allows to get the country of affiliation for co-authors (AU-CO)
+#does not work for filtered papers in the data frame bib_title_included as it does not have the field AU_CO
+NetMatrix <- biblioNetwork(bib, analysis = "collaboration", network = "countries", short = TRUE, sep = ";") #creating the bibliometric network from the data frame (bib) the type of analysis being formed is collaboration, and the network typology is countries
+net = networkPlot(NetMatrix, n = 50, Title = "Country Collaboration", type = "fruchterman", size = 10, remove.multiple = TRUE, labelsize = 0.75) #visualisation 
+dev.off()
+```
+
+Keyword co-occurrences - this visualises which keywords tend to occur together in papers
+
+```{r}
+NetMatrix <- biblioNetwork(bib_title_included, analysis = "co-occurrences", network = "keywords", sep = ";") #creating the bibliometric network from the data frame (bib), the type of analysis being formed is co-occurences, and the network typology is keywords
+net = networkPlot(NetMatrix, n = 35, Title = "Keyword co-occurences", type = "fruchterman", size = T, remove.multiple = FALSE, labelsize = 0.7, edgesize = 5) #visualising the plot
+
+pdf(file = "keywordcooccurences.pdf", height = 8, width = 8, pointsize=10) #
+NetMatrix <- biblioNetwork(bib_title_included, analysis = "co-occurrences", network = "keywords", sep = ";") #creating the bibliometric network from the data frame (bib), the type of analysis being formed is co-occurences, and the network typology is keywords
+net = networkPlot(NetMatrix, n = 35, Title = "Keyword co-occurences", type = "fruchterman", size = T, remove.multiple = FALSE, labelsize = 0.7, edgesize = 5) #visualising the plot
+dev.off()
+```
+
+Keyword Growth -> this calculates yearly occurences of the top keywords/terms
+
+```{r}
+
+topKW=KeywordGrowth(bib_title_included, Tag = "ID", sep = ";", top=15, cdf=TRUE)
+topKW #calculating yearly co-occurences of the papers keywords
+#install.packages("reshape2", dependencies=TRUE, repos = "http://cran.us.r-project.org")
+library(reshape2)
+library(ggplot2)
+DF=melt(topKW, id='Year')
+ggplot(DF,aes(Year,value, group=variable, color=variable))+geom_line() #plotting the results using ggplot package
+
+bib_title_included$labels
+
+pdf(file = "keywordgrowth.pdf", height = 8, width = 8, pointsize=10) #
+DF=melt(topKW, id='Year')
+ggplot(DF,aes(Year,value, group=variable, color=variable))+geom_line() #plotting the results using ggplot package
+
+bib_title_included$labels
+dev.off()
+```
+
+Abstract co-occurences -> This analysis did not work, received the error message of "Field AB_TM is not a column name of input data frame. I did think this would have been an interesting analysis though, potentially would have linked papers of similar interests. 
+
+```{r}
+#NetMatrix <- biblioNetwork(bib_title_included, analysis = "co-occurrences", network = "abstracts", sep = ";") #creating the bibliometric network from the data frame (bib), the type of analysis being formed is co-occurences, and the network typology is keywords
+#net = networkPlot(NetMatrix, n = 35, Title = "Abstract co-occurence", type = "fruchterman", size = T, remove.multiple = FALSE, labelsize = 0.7, edgesize = 5) #visualising the plot
+```
+
+Co-word analysis - the co-occurences of words are used to map the structure research takes. To do this a conceptual structure map is created with correspondence analysis (CA), multiple correspondence analysis (MCA) metric multidimensional scaling (MDS),and clusteirng of bipartite network of terms 
+
+```{r}
+CS <- conceptualStructure(bib_title_included, field = "ID", minDegree = 20, k.max = 5, stemming = FALSE, labelsize = 10) #creates the conceptual structure map, specifying minimum occurence of terms, max no of clusters to keep.  
+```
+
+Historical Direct Citation Network - visualising chronological network of most relevant citations in a collection -> in which order are authors being cited and who cites who? 
+
+```{r}
+
+histResults <- histNetwork(bib_title_included, min.citations = 10, sep = ";") #creating the historical network from the bibliometric data frame
+
+net = histPlot(histResults, labelsize = 2)
+```
+
+Field by year -> Calculates median year for each item of field tag
+
+```{r}
+#fieldByYear(
+#bib_title_included,
+#field = "ID",
+#timespan = NULL #no specified timespan,
+#min.freq = 50, #minimum frequency of the term to include in the analysis
+#n.items = 2,#max no of items per year to include in plot
+#labelsize = NULL,
+#dynamic.plot = FALSE,
+#graph = TRUE
+#)
+```
+Source analysis -> No of documents published annually per top sources -> do not necessarily plan on using this
+
+```{r}
+#head(bib_title_included)
+#data(bib_title_included, package = "bibliometrixData")
+#topSO=sourceGrowth(bib_title_included, top=5, cdf=TRUE)
+#topSO
+#install.packages("reshape2")
+#library(reshape2)
+#library(ggplot2)
+#DF= melt(topSO, id='Year')
+#ggplot(DF,aes(Year,value, group=variable, color=variable))+geom_line()
+```
+
+Thematic map -> Creating a thematic map based on co-word network analysis and clustering
+
+```{r}
+data(bib_title_included, package = "bibliometrixData")
+res <- thematicMap(bib_title_included, field = "ID", n = 500, minfreq = 50, size = 0.5, repel = TRUE) #min frequency per thousand of a cluster
+plot(res$map)
+```
